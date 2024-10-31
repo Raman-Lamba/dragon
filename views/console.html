@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Echo WebSocket Client</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 20px;
+      }
+      #messageLog {
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 300px;
+        overflow-y: auto;
+        margin-bottom: 10px;
+        background: #f5f5f5;
+      }
+      .message {
+        margin: 5px 0;
+        padding: 5px;
+        border-radius: 4px;
+      }
+      .sent {
+        background: #e3f2fd;
+        margin-left: 20px;
+      }
+      .received {
+        background: #f5f5f5;
+        margin-right: 20px;
+      }
+      .error {
+        color: red;
+        background: #fee;
+        padding: 5px;
+        margin: 5px 0;
+      }
+      .status {
+        color: #666;
+        font-style: italic;
+      }
+      .input-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      #messageInput {
+        flex: 1;
+        padding: 8px;
+      }
+      button {
+        padding: 8px 15px;
+        background: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #45a049;
+      }
+      button:disabled {
+        background: #cccccc;
+        cursor: not-allowed;
+      }
+      #connectionStatus {
+        margin-bottom: 10px;
+        padding: 5px;
+        border-radius: 4px;
+      }
+      .connected {
+        background: #dff0d8;
+        color: #3c763d;
+      }
+      .disconnected {
+        background: #f2dede;
+        color: #a94442;
+      }
+      #debugInfo {
+        margin-top: 10px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Echo WebSocket Test Client</h2>
+    <div id="connectionStatus" class="disconnected">Status: Disconnected</div>
+    <div id="messageLog"></div>
+    <div class="input-group">
+      <input type="text" id="messageInput" placeholder="Type a message..." />
+      <button id="sendButton" disabled>Send</button>
+      <button id="connectButton">Connect</button>
+    </div>
+    <div id="debugInfo"></div>
+
+    <script>
+      let ws = null;
+      let reconnectAttempts = 0;
+      const MAX_RECONNECT_ATTEMPTS = 3;
+      const WEBSOCKET_URL = "ws://127.0.0.1:5555/echo"; // Using 127.0.0.1 instead of localhost
+
+      const messageLog = document.getElementById("messageLog");
+      const messageInput = document.getElementById("messageInput");
+      const sendButton = document.getElementById("sendButton");
+      const connectButton = document.getElementById("connectButton");
+      const connectionStatus = document.getElementById("connectionStatus");
+      const debugInfo = document.getElementById("debugInfo");
+
+      function updateDebugInfo(info) {
+        const timestamp = new Date().toLocaleTimeString();
+        debugInfo.innerHTML += `[${timestamp}] ${info}<br>`;
+        debugInfo.scrollTop = debugInfo.scrollHeight;
+      }
+
+      function updateConnectionStatus(connected, details = "") {
+        connectionStatus.textContent = `Status: ${
+          connected ? "Connected" : "Disconnected"
+        } ${details}`;
+        connectionStatus.className = connected ? "connected" : "disconnected";
+        sendButton.disabled = !connected;
+        connectButton.textContent = connected ? "Disconnect" : "Connect";
+
+        if (details) {
+          updateDebugInfo(details);
+        }
+      }
+
+      function logMessage(message, type) {
+        const div = document.createElement("div");
+        div.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+        div.className = `message ${type}`;
+        messageLog.appendChild(div);
+        messageLog.scrollTop = messageLog.scrollHeight;
+      }
+
+      function connect() {
+        if (ws && ws.readyState <= 1) {
+          // 0 = CONNECTING, 1 = OPEN
+          ws.close();
+          return;
+        }
+
+        try {
+          updateDebugInfo(`Attempting to connect to ${WEBSOCKET_URL}`);
+          ws = new WebSocket(WEBSOCKET_URL);
+
+          // Set connection timeout
+          const connectionTimeout = setTimeout(() => {
+            if (ws.readyState !== WebSocket.OPEN) {
+              ws.close();
+              updateConnectionStatus(false, "Connection timeout");
+            }
+          }, 5000);
+
+          ws.onopen = () => {
+            clearTimeout(connectionTimeout);
+            updateConnectionStatus(true);
+            logMessage("Connected to server", "status");
+            reconnectAttempts = 0;
+          };
+
+          ws.onmessage = (event) => {
+            logMessage(`Echo: ${event.data}`, "received");
+          };
+
+          ws.onclose = (event) => {
+            clearTimeout(connectionTimeout);
+            updateConnectionStatus(false, `Closed (Code: ${event.code})`);
+            logMessage(
+              `Disconnected from server (Code: ${event.code})`,
+              "status"
+            );
+            ws = null;
+
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+              reconnectAttempts++;
+              const delay = Math.min(
+                1000 * Math.pow(2, reconnectAttempts),
+                10000
+              );
+              updateDebugInfo(
+                `Reconnecting in ${
+                  delay / 1000
+                } seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
+              );
+              setTimeout(connect, delay);
+            }
+          };
+
+          ws.onerror = (error) => {
+            updateDebugInfo(
+              `WebSocket error: ${error.message || "Unknown error"}`
+            );
+            logMessage("WebSocket error occurred", "error");
+          };
+        } catch (error) {
+          updateDebugInfo(`Connection error: ${error.message}`);
+          logMessage(`Connection error: ${error.message}`, "error");
+          updateConnectionStatus(false, error.message);
+        }
+      }
+
+      connectButton.onclick = () => {
+        if (ws) {
+          ws.close();
+        } else {
+          reconnectAttempts = 0;
+          connect();
+        }
+      };
+
+      sendButton.onclick = () => {
+        const message = messageInput.value.trim();
+        if (message && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(message);
+          logMessage(`You: ${message}`, "sent");
+          messageInput.value = "";
+        }
+      };
+
+      messageInput.onkeypress = (event) => {
+        if (event.key === "Enter") {
+          sendButton.click();
+        }
+      };
+    </script>
+  </body>
+</html>
